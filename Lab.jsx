@@ -1,8 +1,14 @@
 import React, { useState, useEffect } from "react";
 import * as XLSX from "xlsx";
 import "./Lashboard.css";
+import ReactDOM from "react-dom/client";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+} from "react-router-dom";
 
-const LabDashboard = () => {
+const Lab = () => {
   const [role, setRole] = useState(
     localStorage.getItem("role") || ""
   );
@@ -17,6 +23,10 @@ const LabDashboard = () => {
   const [patientList, setPatientList] = useState([]);
   const [selectedPatient, setSelectedPatient] = useState("");
 
+  const isOutsourced =
+    sidInput &&
+    excelDatabase[sidInput]?.tests[selectedTest]?.isOutsourced;
+
   const [patientInfo, setPatientInfo] = useState({
     name: "",
     age: "",
@@ -25,6 +35,7 @@ const LabDashboard = () => {
     photo: "",
   });
 
+  // DEFINE STEP NAMES - THIS WAS MISSING
   const stepNames = [
     "Billing",
     "Sample Collection",
@@ -38,10 +49,6 @@ const LabDashboard = () => {
     "Report Sent",
   ];
 
-  const isOutsourced =
-    sidInput &&
-    excelDatabase[sidInput]?.tests[selectedTest]?.isOutsourced;
-
   const handleLogin = (selectedRole) => {
     setRole(selectedRole);
     localStorage.setItem("role", selectedRole);
@@ -51,7 +58,7 @@ const LabDashboard = () => {
     localStorage.removeItem("role");
     setRole("");
   };
-  
+
   const parseJsonCell = (value) => {
     if (!value) return {};
     if (typeof value === "object") return value;
@@ -112,27 +119,58 @@ const LabDashboard = () => {
             };
           }
 
+          // PAD SID TO 6 DIGITS
           const sid = String(row.SID).padStart(6, "0");
 
-          // PARSE STEP DETAILS FOR MULTIPLE TESTS
-          const stepDetailsForAllTests = {};
+          const parsedTestNames =
+            parsedTests && typeof parsedTests === "object"
+              ? Object.keys(parsedTests)
+              : [];
 
-          stepNames.forEach((stepName) => {
-            // Get the column value for this step
-            let columnValue = row[stepName];
+          // FIX: Changed from perTestStepDetails to properly named variable
+          const perTestStepDetails = {};
 
-            if (!columnValue) return;
+          parsedTestNames.forEach((testName) => {
+            stepNames.forEach((stepName) => {
+              const rawValue =
+                row[`${stepName}_${testName}`] ||
+                row[`${stepName} (${testName})`] ||
+                row[`${stepName} - ${testName}`] ||
+                row[`${stepName} | ${testName}`];
 
-            // Parse the JSON that contains test-specific data
-            const parsedStepData = parseJsonCell(columnValue);
-
-            if (!parsedStepData || Object.keys(parsedStepData).length === 0)
-              return;
-
-            // Now parsedStepData should be: { "Blood Test": {...}, "Urine Test": {...} }
-            stepDetailsForAllTests[stepName] = parsedStepData;
+              if (
+                rawValue !== undefined &&
+                rawValue !== null &&
+                rawValue !== ""
+              ) {
+                const parsedValue = parseJsonCell(rawValue);
+                if (Object.keys(parsedValue).length) {
+                  perTestStepDetails[testName] =
+                    perTestStepDetails[testName] || {};
+                  perTestStepDetails[testName][stepName] = parsedValue;
+                }
+              }
+            });
           });
 
+          const separateStepColumns = stepNames;
+          const defaultStepData = {};
+
+          separateStepColumns.forEach((stepName) => {
+            const rawValue = row[stepName];
+            if (
+              rawValue !== undefined &&
+              rawValue !== null &&
+              rawValue !== ""
+            ) {
+              const parsedValue = parseJsonCell(rawValue);
+              if (Object.keys(parsedValue).length) {
+                defaultStepData[stepName] = parsedValue;
+              }
+            }
+          });
+
+          // FIX: Changed parsedStepDetails to perTestStepDetails
           formattedData[sid] = {
             name: row.Name,
             age: row.Age,
@@ -143,10 +181,22 @@ const LabDashboard = () => {
               parsedTests && typeof parsedTests === "object"
                 ? parsedTests
                 : {},
-            // Store all step details with test-specific breakdown
-            stepDetails: stepDetailsForAllTests,
+            stepDetails: perTestStepDetails,
+            billing: parseJsonCell(row.Billing),
+            sampleCollection: parseJsonCell(row["Sample Collection"]),
+            sampleProcessing: parseJsonCell(row["Sample Processing"]),
+            sampleOutsourced: parseJsonCell(row["Sample Outsourced"]),
+            resultReceived: parseJsonCell(row["Result Received"]),
+            resultEntry: parseJsonCell(row["Result Entry"]),
+            authorisation: parseJsonCell(row.Authorisation),
+            secondLevelAuthorisation: parseJsonCell(
+              row["2nd Level Authorisation"]
+            ),
+            reportPrint: parseJsonCell(row["Report Print"]),
+            reportSent: parseJsonCell(row["Report Sent"]),
           };
 
+          // FIX: Use padded SID in patient list as well
           patients.push({
             sid: sid,
             name: row.Name,
@@ -154,7 +204,8 @@ const LabDashboard = () => {
             referral: row.Referral,
           });
 
-          console.log("FORMATTED DATA:", formattedData[sid]);
+          console.log("FORMATTED:", formattedData);
+          console.log("PATIENTS:", patients);
         });
 
         setExcelDatabase(formattedData);
@@ -223,6 +274,7 @@ const LabDashboard = () => {
   const getStepStatus = (index) => {
     if (currentProgress === -1) return "pending";
 
+    /* FINAL STAGE */
     if (currentProgress === 9) {
       return "completed";
     }
@@ -264,436 +316,138 @@ const LabDashboard = () => {
     }
   };
 
-  // IMPROVED HOVER CONTENT FUNCTION
-  const getHoverContent = (stepIndex) => {
+  const getHoverContent = (stepIndex, isOutsourced) => {
+    const stepNamesArray = [
+      "Billing",
+      "Sample Collection",
+      "Sample Processing",
+      "Sample Outsourced",
+      "Result Received",
+      "Result Entry",
+      "Authorisation",
+      "2nd Level Authorisation",
+      "Report Print",
+      "Report Sent",
+    ];
 
-  const stepName = stepNames[stepIndex];
+    const patientData = excelDatabase[sidInput];
+    const stepName = stepNamesArray[stepIndex];
 
-  const patientData =
-    excelDatabase[sidInput];
+    if (
+      patientData &&
+      patientData.stepDetails &&
+      patientData.stepDetails[selectedTest]
+    ) {
+      const testStepDetails = patientData.stepDetails[selectedTest];
+      const stepData = testStepDetails[stepName];
 
-  if (!patientData || !selectedTest) {
+      if (!testStepDetails) {
+        console.warn("Hover details missing for selectedTest/_default", {
+          sid: sidInput,
+          selectedTest,
+          stepName,
+          availableTests: Object.keys(patientData.stepDetails || {}),
+        });
+      }
 
-    return {
-      left: [],
-      right: [],
-    };
-  }
+      if (stepData) {
+        if (Array.isArray(stepData)) {
+          return stepData;
+        } else if (typeof stepData === "object") {
+          return Object.entries(stepData).map(([key, value]) => ({
+            label: key,
+            value: value,
+          }));
+        }
+      }
 
-  const stepData =
-    patientData.stepDetails?.[
-      stepName
-    ]?.[selectedTest];
+      if (testStepDetails && !stepData) {
+        console.warn("Hover step data missing for stepName", {
+          sid: sidInput,
+          selectedTest,
+          stepName,
+          availableSteps: Object.keys(testStepDetails),
+        });
+      }
+    }
 
-  if (!stepData) {
-
-    return {
-      left: [],
-      right: [],
-    };
-  }
-
-  // BILLING
-
-  if (stepIndex === 0) {
-
-    return {
-
-  left: [
-    {
-      label: "Company/Lab",
-      value: stepData.company,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // SAMPLE COLLECTION
-
-  if (stepIndex === 1) {
-
-    return {
-
-  left: [
-    {
-      label: "Outsourced To",
-      value: stepData.company,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // SAMPLE PROCESSING
-
-  if (stepIndex === 2) {
-
-    return {
-
-  left: [
-    {
-      label: "Company/Lab",
-      value: stepData.company,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // SAMPLE OUTSOURCED
-
-  if (stepIndex === 3) {
-
-    return {
-
-  left: [
-    {
-      label: "Outsourced To",
-      value: stepData.company,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // RESULT RECEIVED
-
-  if (stepIndex === 4) {
-
-    return {
-
-      left: [],
-
-      right: [
-        {
-          label: "Date",
-          value: stepData.date,
-        },
-
-        {
-          label: "Time",
-          value: stepData.time,
-        },
+    // Default fallback if no Excel data is found
+    const defaultContents = {
+      0: [
+        { label: "Staff ID", value: "N/A" },
+        { label: "Staff Name", value: "N/A" },
       ],
-    };
-  }
-
-  // RESULT ENTRY
-
-  if (stepIndex === 5) {
-
-    return {
-
-      left: [
-        {
-          label: "Staff ID",
-          value: stepData.staffId,
-        },
-
-        {
-          label: "Staff Name",
-          value: stepData.staffName,
-        },
+      1: [
+        { label: "Staff Name", value: "N/A" },
+        { label: "Staff ID", value: "N/A" },
       ],
-
-      right: [
-        {
-          label: "Date",
-          value: stepData.date,
-        },
-
-        {
-          label: "Time",
-          value: stepData.time,
-        },
+      2: [{ label: "Company/Lab Name", value: "N/A" }],
+      3: [
+        isOutsourced
+          ? { label: "Outsourced To", value: "N/A" }
+          : { label: "Status", value: "Not Outsourced" },
       ],
+      4: [
+        { label: "From", value: "N/A" },
+        { label: "To", value: "N/A" },
+      ],
+      5: [
+        { label: "Staff ID", value: "N/A" },
+        { label: "Staff Name", value: "N/A" },
+      ],
+      6: [
+        { label: "Authoriser Name", value: "N/A" },
+        { label: "Authoriser ID", value: "N/A" },
+      ],
+      7: [
+        { label: "Authoriser Name", value: "N/A" },
+        { label: "Authoriser ID", value: "N/A" },
+      ],
+      8: [
+        { label: "Staff ID", value: "N/A" },
+        { label: "Staff Name", value: "N/A" },
+      ],
+      9: [{ label: "Received By", value: "N/A" }],
     };
-  }
 
-  // AUTHORISATION
-
-  if (stepIndex === 6) {
-
-    return {
-
-  left: [
-    {
-      label: "Authoriser ID",
-      value: stepData.authoriserId,
-    },
-
-    {
-      label: "Authoriser Name",
-      value: stepData.authoriserName,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // 2ND LEVEL AUTHORISATION
-
-  if (stepIndex === 7) {
-
-    return {
-
-  left: [
-    {
-      label: "Authoriser ID",
-      value: stepData.authoriserId,
-    },
-
-    {
-      label: "Authoriser Name",
-      value: stepData.authoriserName,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // REPORT PRINT
-
-  if (stepIndex === 8) {
-
-    return {
-
-  left: [
-    {
-      label: "Staff ID",
-      value: stepData.staffId,
-    },
-
-    {
-      label: "Staff Name",
-      value: stepData.staffName,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  // REPORT SENT
-
-  if (stepIndex === 9) {
-
-    return {
-
-  left: [
-    {
-      label: "Received By",
-      value: stepData.receivedBy,
-    },
-  ],
-
-  right: [
-    {
-      label: "Date",
-      value: stepData.date,
-    },
-
-    {
-      label: "Time",
-      value: stepData.time,
-    },
-  ],
-};
-  }
-
-  return {
-    left: [],
-    right: [],
+    return defaultContents[stepIndex] || [];
   };
-};
+
   const coords =
     window.innerWidth <= 768
       ? [
-          { t: "9%", l: "15%" },
-          { t: "9%", l: "45%" },
-          { t: "9%", l: "75%" },
-          { t: "40%", l: "90%" },
-          { t: "40%", l: "65%" },
-          { t: "40%", l: "35%" },
-          { t: "40%", l: "10%" },
-          { t: "75%", l: "25%" },
-          { t: "75%", l: "55%" },
-          { t: "75%", l: "90%" },
+          { t: "15%", l: "15%" },
+          { t: "10%", l: "35%" },
+          { t: "25%", l: "55%" },
+          { t: "10%", l: "75%" },
+          { t: "45%", l: "60%" },
+          { t: "60%", l: "40%" },
+          { t: "75%", l: "20%" },
+          { t: "88%", l: "45%" },
+          { t: "75%", l: "75%" },
         ]
       : [
-          { t: "9%", l: "15%" },
-          { t: "9%", l: "45%" },
-          { t: "9%", l: "75%" },
+          { t: "30%", l: "15%" },
+          { t: "20%", l: "35%" },
+          { t: "20%", l: "55%" },
+          { t: "19%", l: "75%" },
           { t: "40%", l: "90%" },
-          { t: "40%", l: "65%" },
-          { t: "40%", l: "35%" },
-          { t: "40%", l: "10%" },
-          { t: "75%", l: "25%" },
-          { t: "75%", l: "55%" },
-          { t: "75%", l: "90%" },
+          { t: "%", l: "60%" },
+          { t: "70%", l: "40%" },
+          { t: "85%", l: "20%" },
+          { t: "90%", l: "45%" },
+          { t: "85%", l: "75%" },
         ];
 
-  const createCurvedPath = (points) => {
+  const svgPath = coords
+    .map((point, index) => {
+      const x = parseFloat(point.l);
+      const y = parseFloat(point.t);
 
-  if (!points.length) return "";
+      return `${index === 0 ? "M" : "L"} ${x} ${y}`;
+    })
+    .join(" ");
 
-  let path = `M ${parseFloat(points[0].l)} ${parseFloat(points[0].t)}`;
-
-  for (let i = 1; i < points.length; i++) {
-
-    const prev = points[i - 1];
-    const curr = points[i];
-
-    const prevX = parseFloat(prev.l);
-    const prevY = parseFloat(prev.t);
-
-    const currX = parseFloat(curr.l);
-    const currY = parseFloat(curr.t);
-
-    const midX = (prevX + currX) / 2;
-    const midY = (prevY + currY) / 2;
-
-    path += ` Q ${prevX} ${prevY} ${midX} ${midY}`;
-  }
-  const lastPoint = points[points.length - 1];
-
-  path += ` T ${parseFloat(lastPoint.l)} ${parseFloat(lastPoint.t)}`;
-
-  return path;
-};
-
-const svgPath = createCurvedPath(coords);
-let progressPath = "";
-
-if (currentProgress >= 0) {
-
-  const progressCoords = [];
-
-  // FINAL STEP COMPLETED
-
-  if (
-    currentProgress >=
-    coords.length - 1
-  ) {
-
-    progressCoords.push(...coords);
-
-  } else {
-
-    // ADD ALL COMPLETED STEPS
-    // INCLUDING CURRENT STEP
-
-    for (
-      let i = 0;
-      i <= currentProgress;
-      i++
-    ) {
-
-      progressCoords.push(coords[i]);
-    }
-
-    // MOVE TOWARDS NEXT STEP
-
-    const current =
-      coords[currentProgress];
-
-    const next =
-      coords[currentProgress + 1];
-
-    const currentX =
-      parseFloat(current.l);
-
-    const currentY =
-      parseFloat(current.t);
-
-    const nextX =
-      parseFloat(next.l);
-
-    const nextY =
-      parseFloat(next.t);
-  }
-
-  // CREATE SVG PATH
-
-progressPath = createCurvedPath(progressCoords);
-}
   const processEstimates = [
     { hours: "15 mins", days: 0 },
     { hours: "30 mins", days: 0 },
@@ -735,6 +489,12 @@ progressPath = createCurvedPath(progressCoords);
     month: "2-digit",
     year: "numeric",
   });
+
+  const currentActiveStep =
+    trackingSteps.find((s) => s.status === "in-progress") ||
+    (currentProgress === 9
+      ? trackingSteps[9]
+      : { title: "NO SID ENTERED" });
 
   const currentData =
     sidInput && excelDatabase[sidInput] ? excelDatabase[sidInput] : {};
@@ -802,6 +562,7 @@ progressPath = createCurvedPath(progressCoords);
             )}
           </div>
 
+          {/* SCROLLABLE PATIENT LIST */}
           <div className="patient-list">
             {filteredPatients.length > 0 ? (
               filteredPatients.map((patient, index) => {
@@ -853,7 +614,7 @@ progressPath = createCurvedPath(progressCoords);
                 );
               })
             ) : (
-              <p style={{ padding: "20px", color: "#000000" }}>
+              <p style={{ padding: "20px", color: "#999" }}>
                 No patients found
               </p>
             )}
@@ -941,6 +702,7 @@ progressPath = createCurvedPath(progressCoords);
         </div>
 
         <div className="dashboard-top-section">
+          {/* LEFT SIDE */}
           <div className="estimation-container">
             <p>
               <b>Estimated time:</b> {currentEstimate.hours}
@@ -951,6 +713,7 @@ progressPath = createCurvedPath(progressCoords);
             </p>
           </div>
 
+          {/* CENTER */}
           <div className="progress-card">
             <div className="progress-header">
               <span className="progress-title">Overall Progress</span>
@@ -968,11 +731,12 @@ progressPath = createCurvedPath(progressCoords);
             </div>
           </div>
 
+          {/* RIGHT SIDE */}
           <div className="status-selection-container">
             <p className="text">
               Current Status :{" "}
               {trackingSteps.find((s) => s.status === "in-progress")?.title ||
-                "---"}
+                "No SID Entered"}
             </p>
 
             <select
@@ -993,27 +757,17 @@ progressPath = createCurvedPath(progressCoords);
 
         <div className="tracking-area">
           <svg
-              viewBox="0 0 100 100"
-              className="svg-style"
-              preserveAspectRatio="none"
-            >
-
-              {/* GREY BACKGROUND PATH */}
-
-              <path
-                d={svgPath}
-                className="path-bg"
-              />
-
-              {/* GREEN PROGRESS PATH */}
-
-              {progressPath && (
-                <path
-                  d={progressPath}
-                  className="path-fill"
-                />
-              )}
-
+            viewBox="0 0 100 100"
+            className="svg-style"
+            preserveAspectRatio="none"
+          >
+            <path
+              d={svgPath}
+              fill="none"
+              stroke="#94a3b8"
+              strokeWidth="0.5"
+              strokeDasharray="3 2"
+            />
           </svg>
 
           {trackingSteps.map((step, idx) => {
@@ -1030,133 +784,191 @@ progressPath = createCurvedPath(progressCoords);
                 }}
               >
                 <div
-                  className={`step-image-container ${step.status}`}
+                  className="step-card"
+                  style={{
+                    background: config.bg,
+                    border: `1px solid ${config.color}`,
+                  }}
                 >
-                  <img
-                    src={`/steps/step${idx + 1}.png`}
-                    alt={step.title}
-                    className={`step-image 
-                      ${idx === 9 ? "step10-image" : ""}
-                      ${
-                        step.status === "in-progress"
-                          ? "active-step"
-                          : ""
-                      }
-                    `}
-                  />
+                  {/* STEP NUMBER */}
+                  <div
+                    className="step-circle"
+                    style={{
+                      background: config.color,
+                    }}
+                  >
+                    {idx + 1}
+                  </div>
 
-                  
-              <div
-                  className={`
+                  {/* TITLE */}
+                  <div className="step-title">{step.title}</div>
 
-                    hover-info-card
+                  {/* STATUS */}
+                  <div
+                    className="step-status"
+                    style={{
+                      color: config.color,
+                    }}
+                  >
+                    {config.label}
+                  </div>
 
-                    ${
-                      role === "staff"
-                        ? "staff-hover-card"
-                        : "patient-hover-card"
-                    }
+                  {/* HOVER INFO */}
+                  <div
+                    className={`hover-info-card ${
+                      idx >= 7 ? "hover-top" : ""
+                    }`}
+                  >
+                    <div className="hover-title">{step.title}</div>
 
-                  `}
-                >
+                    {getHoverContent(idx, isOutsourced).map(
+                      (item, itemIdx) => (
+                        <div className="hover-row" key={itemIdx}>
+                          <span className="hover-label">
+                            {item.label}
+                          </span>
 
-                  {/* STAFF VIEW */}
-
-                  {role === "staff" ? (
-
-                    <div className="hover-grid">
-
-                      {/* LEFT */}
-
-                      <div className="hover-column">
-
-                        <div className="hover-heading">
-                          Done By
+                          <span className="hover-value">
+                            {item.value}
+                          </span>
                         </div>
+                      )
+                    )}
+                  </div>
 
-                        {getHoverContent(idx)?.left?.map(
-                          (item, i) => (
+                  <div className="hover-info">
+                    {idx === 0 && (
+                      <>
+                        <p>
+                          <b>Staff ID:</b>{" "}
+                          {currentData.billing?.["Staff ID"]}
+                        </p>
+                        <p>
+                          <b>Staff Name:</b>{" "}
+                          {currentData.billing?.["Staff Name"]}
+                        </p>
+                      </>
+                    )}
 
-                            <div
-                              className="hover-item"
-                              key={i}
-                            >
-                              <span className="hover-label">
-                                {item.label}
-                              </span>
+                    {idx === 1 && (
+                      <>
+                        <p>
+                          <b>Staff Name:</b>{" "}
+                          {currentData.sampleCollection?.["Staff Name"]}
+                        </p>
+                        <p>
+                          <b>Staff ID:</b>{" "}
+                          {currentData.sampleCollection?.["Staff ID"]}
+                        </p>
+                      </>
+                    )}
 
-                              <span className="hover-value">
-                                {item.value || "--"}
-                              </span>
-                            </div>
-                          )
-                        )}
+                    {idx === 2 && (
+                      <>
+                        <p>
+                          <b>Lab:</b>{" "}
+                          {
+                            currentData.sampleProcessing?.[
+                              "Company/Lab Name"
+                            ]
+                          }
+                        </p>
+                      </>
+                    )}
 
-                      </div>
+                    {idx === 3 && (
+                      <>
+                        <p>
+                          <b>Outsourced To:</b>{" "}
+                          {currentData.sampleOutsourced?.["Outsourced To"]}
+                        </p>
+                      </>
+                    )}
 
-                      {/* RIGHT */}
+                    {idx === 4 && (
+                      <>
+                        <p>
+                          <b>Company:</b>{" "}
+                          {
+                            currentData.resultReceived?.[
+                              "Company/Lab Name"
+                            ]
+                          }
+                        </p>
+                      </>
+                    )}
 
-                      <div className="hover-column">
+                    {idx === 5 && (
+                      <>
+                        <p>
+                          <b>Staff ID:</b>{" "}
+                          {currentData.resultEntry?.["Staff ID"]}
+                        </p>
+                        <p>
+                          <b>Staff Name:</b>{" "}
+                          {currentData.resultEntry?.["Staff Name"]}
+                        </p>
+                      </>
+                    )}
 
-                        <div className="hover-heading">
-                          Done On
-                        </div>
+                    {idx === 6 && (
+                      <>
+                        <p>
+                          <b>Authoriser:</b>{" "}
+                          {currentData.authorisation?.["Authoriser Name"]}
+                        </p>
+                        <p>
+                          <b>ID:</b>{" "}
+                          {currentData.authorisation?.["Authoriser ID"]}
+                        </p>
+                      </>
+                    )}
 
-                        {getHoverContent(idx)?.right?.map(
-                          (item, i) => (
+                    {idx === 7 && (
+                      <>
+                        <p>
+                          <b>Authoriser:</b>{" "}
+                          {
+                            currentData.secondLevelAuthorisation?.[
+                              "Authoriser Name"
+                            ]
+                          }
+                        </p>
+                        <p>
+                          <b>ID:</b>{" "}
+                          {
+                            currentData.secondLevelAuthorisation?.[
+                              "Authoriser ID"
+                            ]
+                          }
+                        </p>
+                      </>
+                    )}
 
-                            <div
-                              className="hover-item"
-                              key={i}
-                            >
-                              <span className="hover-label">
-                                {item.label}
-                              </span>
+                    {idx === 8 && (
+                      <>
+                        <p>
+                          <b>Staff ID:</b>{" "}
+                          {currentData.reportPrint?.["Staff ID"]}
+                        </p>
+                        <p>
+                          <b>Staff Name:</b>{" "}
+                          {currentData.reportPrint?.["Staff Name"]}
+                        </p>
+                      </>
+                    )}
 
-                              <span className="hover-value">
-                                {item.value || "--"}
-                              </span>
-                            </div>
-                          )
-                        )}
-
-                      </div>
-
-                    </div>
-
-                  ) : (
-
-                    /* PATIENT VIEW */
-
-                    <div className="patient-hover-view">
-
-                      {getHoverContent(idx)?.right?.map(
-                        (item, i) => (
-
-                          <div
-                            className="hover-item"
-                            key={i}
-                          >
-                            <span className="hover-label">
-                              {item.label}
-                            </span>
-
-                            <span className="hover-value">
-                              {item.value || "--"}
-                            </span>
-                          </div>
-                        )
-                      )}
-
-                    </div>
-
-                  )}
-
+                    {idx === 9 && (
+                      <>
+                        <p>
+                          <b>Received By:</b>{" "}
+                          {currentData.reportSent?.["Received By"]}
+                        </p>
+                      </>
+                    )}
+                  </div>
                 </div>
-
-
-                </div>
-                </div>
+              </div>
             );
           })}
         </div>
@@ -1165,4 +977,4 @@ progressPath = createCurvedPath(progressCoords);
   );
 };
 
-export default LabDashboard;
+export default Lab;
